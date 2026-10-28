@@ -1,0 +1,147 @@
+---
+title: "Reto Etapa 2 - Código de apoyo (R)"
+author: "Equipo 3, Grupo 203"
+output: word_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE)
+library(e1071)   # sesgo y curtosis (tipo 3, como en el ejemplo del curso)
+```
+
+# NOTA: este código reproduce en R los cálculos del documento (hechos y verificados en Python). No se pudo ejecutar R en el entorno donde se preparó; ejecútenlo y comparen con las tablas del documento.
+
+## 1. Lectura y unión de las bases (2019-2024)
+
+```{r}
+archivos <- c("Datos_molec_2019-1.csv","Datos_molec_2020-1.csv","Datos_molec_2021-1.CSV",
+              "Datos_molec_2022-1.CSV","Datos_molec_2023-1.CSV","Datos_molec_2024-1.csv")
+anios <- 2019:2024
+lista <- lapply(seq_along(archivos), function(i){
+  d <- read.csv(archivos[i], fileEncoding = "latin1", stringsAsFactors = FALSE)
+  # nombres distintos en 2019
+  names(d)[names(d)=="l_formato"]  <- "l_format"
+  names(d)[names(d)=="r_formato"]  <- "r_format"
+  names(d)[names(d)=="p_formato"]  <- "p_format"
+  d$anio_enc <- anios[i]
+  d
+})
+vars <- c("entidad","sexo","edad","p3_1","p3_2","p3_3","p4","p5","p6_1","p6_2","p6_3","p6_4","p6_5",
+          "p7","p7_3","p10","p11","p12_1","p12_2","p12_3","p12_4","p12_5","p12_6","p12_7","p12_8",
+          "p13","p13_3","p16","p17","p18_1","p18_2","p18_3","p18_4","p18_5","p19","p19_3",
+          "l_format","r_format","p_format","factor","anio_enc")
+A <- do.call(rbind, lapply(lista, function(d) d[, vars]))
+# en 2019 los formatos que no aplican vienen en blanco: se recodifican a 0
+for (v in c("l_format","r_format","p_format")) {
+  A[[v]] <- suppressWarnings(as.numeric(trimws(as.character(A[[v]]))))
+  A[[v]][is.na(A[[v]])] <- 0
+}
+dim(A)   # debe dar 11966 registros
+```
+
+## 2. Variables construidas
+
+```{r}
+A$edad_g <- cut(A$edad, breaks=c(17,29,44,59,200), labels=c("18-29","30-44","45-59","60+"))
+norte <- c(2,3,5,8,10,19,25,26,28); cocc <- c(1,6,11,14,16,18,22,24,32)
+centro <- c(9,13,15,17,21,29);     sur  <- c(4,7,12,20,23,27,30,31)
+A$region <- ifelse(A$entidad %in% norte,"Norte",ifelse(A$entidad %in% cocc,"Centro-Occidente",
+            ifelse(A$entidad %in% centro,"Centro","Sur-Sureste")))
+# 1 = digital, 2 = impreso, 3 = ambos (etiquetas provisionales, por confirmar con el diccionario)
+etq <- c("Digital*","Impreso*","Ambos*")
+```
+
+## 3. Gasto válido por material
+
+```{r}
+armar <- function(lee, forma, monto, fmt, n){
+  L <- A[A[[lee]]==1, ]
+  L$compra <- L[[forma]]==3
+  L$gasto  <- L[[monto]]
+  L$cant   <- L[[n]]
+  L$fmt    <- factor(etq[L[[fmt]]], levels=etq)
+  B <- L[L$compra & L$gasto!=999999 & L$gasto>0, ]
+  list(L=L, B=B)
+}
+Lib <- armar("p3_1","p7","p7_3","l_format","p4")
+Rev <- armar("p3_2","p13","p13_3","r_format","p10")
+Per <- armar("p3_3","p19","p19_3","p_format","p16")
+c(libros=nrow(Lib$B), revistas=nrow(Rev$B), periodicos=nrow(Per$B))  # 1802, 1069, 1417
+```
+
+## 4. Medidas descriptivas del gasto (Tabla 3)
+
+```{r}
+medidas <- function(x) c(n=length(x), Min=min(x), Q1=quantile(x,.25), Mediana=median(x), Media=mean(x),
+  Q3=quantile(x,.75), Max=max(x), DE=sd(x), CV=sd(x)/mean(x), RIC=IQR(x), Sesgo=skewness(x), Curtosis=kurtosis(x))
+round(cbind(Libros=medidas(Lib$B$gasto), Revistas=medidas(Rev$B$gasto), Periodicos=medidas(Per$B$gasto)),2)
+```
+
+```{r, fig.width=9, fig.height=3}
+par(mfrow=c(1,3))
+hist(Lib$B$gasto, main="Libros", xlab="Gasto (pesos)", col="steelblue")
+hist(Rev$B$gasto, main="Revistas", xlab="Gasto (pesos)", col="indianred")
+hist(Per$B$gasto, main="Periódicos", xlab="Gasto (pesos)", col="darkolivegreen3")
+par(mfrow=c(1,3))
+hist(log10(Lib$B$gasto), main="Libros", xlab="log10(gasto)", col="steelblue")
+hist(log10(Rev$B$gasto), main="Revistas", xlab="log10(gasto)", col="indianred")
+hist(log10(Per$B$gasto), main="Periódicos", xlab="log10(gasto)", col="darkolivegreen3")
+```
+
+## 5. Por año (Tabla 4, Figura 3)
+
+```{r, fig.width=9, fig.height=3}
+for (m in list(Lib=Lib, Rev=Rev, Per=Per)) {}
+tabla_anio <- function(B) aggregate(gasto ~ anio_enc, B, function(x) c(n=length(x), mediana=median(x), media=mean(x)))
+tabla_anio(Lib$B); tabla_anio(Rev$B); tabla_anio(Per$B)
+par(mfrow=c(1,3))
+boxplot(gasto ~ anio_enc, Lib$B, log="y", main="Libros", xlab="Año", ylab="Gasto (log)")
+boxplot(gasto ~ anio_enc, Rev$B, log="y", main="Revistas", xlab="Año")
+boxplot(gasto ~ anio_enc, Per$B, log="y", main="Periódicos", xlab="Año")
+```
+
+## 6. Decisión de pagar (Tabla 5 y Anexo A)
+
+```{r}
+pct <- function(L, por) round(100*tapply(L$compra, L[[por]], mean),1)
+pct(Lib$L,"anio_enc"); pct(Rev$L,"anio_enc"); pct(Per$L,"anio_enc")
+# ponderado con factor de expansión
+pond <- function(L) round(100*sapply(split(L, L$anio_enc), function(d) sum(d$factor*d$compra)/sum(d$factor)),1)
+pond(Lib$L); pond(Rev$L); pond(Per$L)
+# porcentaje con formato código 1 (Digital*)
+round(100*tapply(Lib$L$fmt=="Digital*", Lib$L$anio_enc, mean),1)
+```
+
+## 7. Gasto por formato, edad y región (Tablas 6, 10, 11)
+
+```{r}
+resumen <- function(B, L, por){
+  a <- aggregate(gasto ~ B[[por]], B, function(x) c(n=length(x), Q1=quantile(x,.25), med=median(x), media=mean(x)))
+  list(gasto=a, pct_compra=pct(L, por))
+}
+for (por in c("fmt","edad_g","region")) { print(por); print(resumen(Lib$B, Lib$L, por)); print(resumen(Rev$B, Rev$L, por)); print(resumen(Per$B, Per$L, por)) }
+```
+
+```{r, fig.width=9, fig.height=3.2}
+par(mfrow=c(1,3))
+boxplot(gasto ~ edad_g, Lib$B, log="y", main="Libros", ylab="Gasto (log)")
+boxplot(gasto ~ edad_g, Rev$B, log="y", main="Revistas")
+boxplot(gasto ~ edad_g, Per$B, log="y", main="Periódicos")
+```
+
+## 8. Uso y contenido (Tablas 7-9, Anexo B)
+
+```{r}
+aggregate(gasto ~ p5,  Lib$B, function(x) c(n=length(x), mediana=median(x), media=mean(x)))
+aggregate(gasto ~ p11, Rev$B, function(x) c(n=length(x), mediana=median(x), media=mean(x)))
+aggregate(gasto ~ p17, Per$B, function(x) c(n=length(x), mediana=median(x), media=mean(x)))
+# contenido: 1 = sí lee, 2 = no lee
+for (g in paste0("p6_",1:5))  print(aggregate(Lib$B$gasto, list(g=Lib$B[[g]]), median))
+for (g in paste0("p18_",1:5)) print(aggregate(Per$B$gasto, list(g=Per$B[[g]]), median))
+```
+
+## 9. Cantidad leída y gasto (Tabla 12)
+
+```{r}
+for (B in list(Lib$B, Rev$B, Per$B)) print(c(pearson=cor(B$cant,B$gasto), spearman=cor(B$cant,B$gasto,method="spearman")))
+```
